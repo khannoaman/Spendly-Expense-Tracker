@@ -4,3 +4,5 @@ jinja2
 python-multipart
 pytest
 httpx
+passlib
+bcrypt==4.0.1
