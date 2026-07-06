@@ -1,3 +1,4 @@
+import os
 import sqlite3
 from contextlib import asynccontextmanager
 
@@ -6,10 +7,11 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
+from starlette.middleware.sessions import SessionMiddleware
 import uvicorn
 
 from database.db import get_db, init_db, pwd_context, seed_db
-from schemas import RegisterForm
+from schemas import LoginForm, RegisterForm
 
 
 @asynccontextmanager
@@ -21,11 +23,32 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+# Session cookie signing key. Must be set via env var in production; falls
+# back to a fixed dev-only value so the app still runs locally out of the box.
+IS_PRODUCTION = os.environ.get("ENV", "development") == "production"
+SESSION_SECRET_KEY = os.environ.get("SESSION_SECRET_KEY")
+if not SESSION_SECRET_KEY:
+    if IS_PRODUCTION:
+        raise RuntimeError("SESSION_SECRET_KEY environment variable must be set in production")
+    SESSION_SECRET_KEY = "dev-only-insecure-secret-key"
+
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=SESSION_SECRET_KEY,
+    same_site="lax",
+    https_only=IS_PRODUCTION,
+)
+
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Templates setup
 templates = Jinja2Templates(directory="templates")
+
+# Precomputed hash to verify against when no user is found, so login takes
+# roughly the same time whether or not the email exists (avoids leaking
+# account existence via response timing).
+_DUMMY_PASSWORD_HASH = pwd_context.hash("no-such-user")
 
 
 # ------------------------------------------------------------------ #
@@ -92,20 +115,51 @@ async def privacy(request: Request):
     return templates.TemplateResponse(request, "privacy.html")
 
 
-@app.post("/login")
-async def login_post(request: Request):
-    # Form submission placeholder (e.g. redirect or show message)
-    return "Login POST — coming in Step 3"
+@app.post("/login", response_class=HTMLResponse)
+async def login_post(
+    request: Request,
+    email: str = Form(...),
+    password: str = Form(...),
+):
+    try:
+        data = LoginForm(email=email, password=password)
+    except ValidationError as exc:
+        error = exc.errors()[0]["msg"].removeprefix("Value error, ")
+        return templates.TemplateResponse(
+            request, "login.html", {"error": error}, status_code=400
+        )
+
+    conn = get_db()
+    try:
+        user = conn.execute(
+            "SELECT id, password_hash FROM users WHERE email = ?", (data.email,)
+        ).fetchone()
+    finally:
+        conn.close()
+
+    password_hash = user["password_hash"] if user else _DUMMY_PASSWORD_HASH
+    if not pwd_context.verify(data.password, password_hash) or user is None:
+        return templates.TemplateResponse(
+            request,
+            "login.html",
+            {"error": "Invalid email or password."},
+            status_code=400,
+        )
+
+    request.session.clear()
+    request.session["user_id"] = user["id"]
+    return RedirectResponse(url="/profile", status_code=303)
+
+
+@app.get("/logout")
+async def logout(request: Request):
+    request.session.clear()
+    return RedirectResponse(url="/login", status_code=303)
 
 
 # ------------------------------------------------------------------ #
 # Placeholder routes — students will implement these                  #
 # ------------------------------------------------------------------ #
-
-@app.get("/logout")
-async def logout():
-    return "Logout — coming in Step 3"
-
 
 @app.get("/profile")
 async def profile():
