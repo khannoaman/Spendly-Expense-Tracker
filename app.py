@@ -2,7 +2,7 @@ import os
 import sqlite3
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, Form, Request
+from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -49,6 +49,35 @@ templates = Jinja2Templates(directory="templates")
 # roughly the same time whether or not the email exists (avoids leaking
 # account existence via response timing).
 _DUMMY_PASSWORD_HASH = pwd_context.hash("no-such-user")
+
+# Fixed categorical order for the profile category breakdown, validated for
+# CVD-safe adjacent contrast against the app's card surface. Categories beyond
+# this many are folded into "Other" (muted) rather than growing the palette.
+_CATEGORY_COLORS = [
+    "#2a78d6",  # blue
+    "#1baf7a",  # aqua
+    "#eda100",  # yellow
+    "#008300",  # green
+    "#4a3aa7",  # violet
+    "#e34948",  # red
+]
+_OTHER_COLOR = "#898781"  # muted ink — signals "not a distinct identity"
+
+
+def get_current_user(request: Request) -> sqlite3.Row:
+    user_id = request.session.get("user_id")
+    if user_id is not None:
+        conn = get_db()
+        try:
+            user = conn.execute(
+                "SELECT id, name, email, created_at FROM users WHERE id = ?", (user_id,)
+            ).fetchone()
+        finally:
+            conn.close()
+        if user is not None:
+            return user
+        request.session.clear()
+    raise HTTPException(status_code=303, headers={"Location": "/login"})
 
 
 # ------------------------------------------------------------------ #
@@ -157,13 +186,82 @@ async def logout(request: Request):
     return RedirectResponse(url="/login", status_code=303)
 
 
+@app.get("/profile", response_class=HTMLResponse)
+async def profile(request: Request, user: sqlite3.Row = Depends(get_current_user)):
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            """
+            SELECT amount, category, description, date
+            FROM expenses
+            WHERE user_id = ?
+            ORDER BY date DESC, id DESC
+            """,
+            (user["id"],),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    total = sum(r["amount"] for r in rows)
+
+    category_totals: dict[str, float] = {}
+    for r in rows:
+        category_totals[r["category"]] = category_totals.get(r["category"], 0) + r["amount"]
+    ranked_categories = sorted(category_totals.items(), key=lambda kv: kv[1], reverse=True)
+
+    top_categories = ranked_categories[: len(_CATEGORY_COLORS)]
+    other_total = sum(amount for _, amount in ranked_categories[len(_CATEGORY_COLORS) :])
+
+    categories = [
+        {
+            "name": name,
+            "amount_formatted": f"{amount:,.2f}",
+            "pct": (amount / total * 100) if total else 0,
+            "color": _CATEGORY_COLORS[i],
+        }
+        for i, (name, amount) in enumerate(top_categories)
+    ]
+    if other_total > 0:
+        categories.append(
+            {
+                "name": "Other",
+                "amount_formatted": f"{other_total:,.2f}",
+                "pct": (other_total / total * 100) if total else 0,
+                "color": _OTHER_COLOR,
+            }
+        )
+
+    category_color_by_name = {name: _CATEGORY_COLORS[i] for i, (name, _) in enumerate(top_categories)}
+
+    expenses = [
+        {
+            "date": r["date"],
+            "category": r["category"],
+            "description": r["description"],
+            "amount_formatted": f"{r['amount']:,.2f}",
+            "color": category_color_by_name.get(r["category"], _OTHER_COLOR),
+        }
+        for r in rows
+    ]
+
+    return templates.TemplateResponse(
+        request,
+        "profile.html",
+        {
+            "user": user,
+            "expenses": expenses,
+            "total_formatted": f"{total:,.2f}",
+            "transaction_count": len(rows),
+            "categories": categories,
+            "top_category": categories[0] if categories else None,
+        },
+    )
+
+
 # ------------------------------------------------------------------ #
 # Placeholder routes — students will implement these                  #
 # ------------------------------------------------------------------ #
 
-@app.get("/profile")
-async def profile():
-    return "Profile page — coming in Step 4"
 
 
 @app.get("/expenses/add")

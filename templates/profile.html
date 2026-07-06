@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+
+{% block title %}Your profile — Spendly{% endblock %}
+
+{% block content %}
+
+<section class="profile-section">
+
+    <div class="profile-header">
+        <h1 class="profile-greeting">Welcome back, {{ user["name"].split(" ")[0] }}</h1>
+        <p class="profile-meta">{{ user["email"] }} · Member since {{ user["created_at"][:10] }}</p>
+    </div>
+
+    <div class="mock-stats profile-stats">
+        <div class="mock-stat">
+            <span class="mock-stat-label">Total spent</span>
+            <span class="mock-stat-value">₹{{ total_formatted }}</span>
+        </div>
+        <div class="mock-stat">
+            <span class="mock-stat-label">Transactions</span>
+            <span class="mock-stat-value">{{ transaction_count }}</span>
+        </div>
+        <div class="mock-stat">
+            <span class="mock-stat-label">Top category</span>
+            {% if top_category %}
+            <span class="mock-stat-value">{{ top_category.name }}</span>
+            <span class="mock-stat-delta mock-stat-delta-muted">₹{{ top_category.amount_formatted }}</span>
+            {% else %}
+            <span class="mock-stat-value">—</span>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if categories %}
+    <div class="category-breakdown">
+        <h2 class="category-breakdown-title">Spending by category</h2>
+        {% for c in categories %}
+        <div class="category-row">
+            <span class="category-name">
+                <span class="category-dot" style="background: {{ c.color }};"></span>
+                {{ c.name }}
+            </span>
+            <div class="category-bar-track">
+                <div class="category-bar-fill" style="width: {{ c.pct }}%; background: {{ c.color }};"></div>
+            </div>
+            <span class="category-amount">₹{{ c.amount_formatted }}</span>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <div class="expenses-card">
+        <div class="expenses-card-header">
+            <h2 class="expenses-card-title">Recent expenses</h2>
+            <a href="{{ url_for('add_expense') }}" class="btn-primary">Add expense</a>
+        </div>
+
+        {% if expenses %}
+        <div class="table-scroll">
+            <table class="expenses-table">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Category</th>
+                        <th>Description</th>
+                        <th class="amount-cell">Amount</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for e in expenses %}
+                    <tr>
+                        <td>{{ e.date }}</td>
+                        <td>
+                            <span class="category-dot" style="background: {{ e.color }};"></span>
+                            {{ e.category }}
+                        </td>
+                        <td>{{ e.description or "—" }}</td>
+                        <td class="amount-cell">₹{{ e.amount_formatted }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <p>No expenses yet. Add your first one to start tracking.</p>
+        </div>
+        {% endif %}
+    </div>
+
+</section>
+
+{% endblock %}
