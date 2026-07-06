@@ -27,16 +27,17 @@ There is no lint/format tooling configured yet.
 
 ## Architecture
 
-- `app.py` — single FastAPI app instance; all routes are currently defined directly in this file (no routers yet). Templates are rendered via Jinja2 (`templates/`) using `templates.TemplateResponse(request, "name.html")`. Static assets are mounted at `/static` from the `static/` directory.
-- `database/db.py` — intended to hold `get_db()` (SQLite connection with `row_factory` and foreign keys enabled), `init_db()` (creates tables with `CREATE TABLE IF NOT EXISTS`), and `seed_db()` (sample dev data). Not yet implemented — this is an early step in the build sequence.
+- `app.py` — single FastAPI app instance; all routes are currently defined directly in this file (no routers yet). Templates are rendered via Jinja2 (`templates/`) using `templates.TemplateResponse(request, "name.html")`. Static assets are mounted at `/static` from the `static/` directory. A `lifespan` context manager calls `init_db()` then `seed_db()` on every app startup — both are idempotent, so this is safe on every dev-server reload.
+- `database/db.py` — implemented. `get_db()` returns a SQLite connection (`row_factory = sqlite3.Row`, foreign keys pragma on). `init_db()` creates `users` and `expenses` tables (`CREATE TABLE IF NOT EXISTS`). `seed_db()` inserts one sample user + a few sample expenses only if `users` is empty. Schema: `users(id, name, email UNIQUE, password_hash, created_at)`; `expenses(id, user_id -> users.id ON DELETE CASCADE, amount, category TEXT, description, date TEXT ISO-8601, created_at)` — `category` is a free-text column, not a lookup table.
+- Passwords are hashed with `passlib`'s `CryptContext(schemes=["bcrypt"])`. `requirements.txt` pins `bcrypt==4.0.1` deliberately — `passlib` 1.7.4 (last released 2020) is incompatible with `bcrypt` >=4.1 (it reads a `bcrypt.__about__.__version__` attribute that no longer exists), so do not bump the `bcrypt` pin without also confirming `passlib` still works, or switching hashing libraries.
 - `templates/base.html` — shared layout (nav, footer, font/CSS includes) that all pages extend via Jinja `{% block %}`s (`title`, `head`, `content`, `scripts`). New pages should extend this base rather than duplicating the shell.
 - `static/css/style.css` and `static/js/main.js` — single global stylesheet/script shared across all pages (no per-page bundling/build step — plain static files served as-is).
-- SQLite is the target database (`expense_tracker.db`, gitignored, created at runtime — not committed).
+- SQLite is the database (`expense_tracker.db`, gitignored, created at runtime — not committed).
 
 ## Current implementation state
 
 Routes in `app.py` fall into two groups:
 1. Working GET pages that render templates: `/`, `/register`, `/login`, `/terms`, `/privacy`.
-2. Placeholder routes returning plain strings, pending implementation: `POST /register`, `POST /login`, `/logout`, `/profile`, `/expenses/add`, `/expenses/{id}/edit`, `/expenses/{id}/delete`. `database/db.py` is also unimplemented.
+2. Placeholder routes returning plain strings, pending implementation: `POST /register`, `POST /login`, `/logout`, `/profile`, `/expenses/add`, `/expenses/{id}/edit`, `/expenses/{id}/delete`.
 
-When implementing one of these, wire it up to real logic (form handling, session/auth, SQLite persistence via `database/db.py`) rather than just changing the placeholder text.
+The database layer (`database/db.py`, schema, seeding, startup wiring) is implemented — see Architecture above. When implementing one of the remaining placeholder routes, wire it up to real logic (form handling, session/auth, SQLite persistence via `database/db.py`'s `get_db()`) rather than just changing the placeholder text.

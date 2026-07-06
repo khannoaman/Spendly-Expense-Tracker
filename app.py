@@ -1,12 +1,15 @@
+import sqlite3
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi import Depends, FastAPI, Form, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from pydantic import ValidationError
 import uvicorn
 
-from database.db import init_db, seed_db
+from database.db import get_db, init_db, pwd_context, seed_db
+from schemas import RegisterForm
 
 
 @asynccontextmanager
@@ -39,10 +42,39 @@ async def register(request: Request):
     return templates.TemplateResponse(request, "register.html")
 
 
-@app.post("/register")
-async def register_post(request: Request):
-    # Form submission placeholder (e.g. redirect or show message)
-    return "Register POST — coming in Step 2"
+@app.post("/register", response_class=HTMLResponse)
+async def register_post(
+    request: Request,
+    name: str = Form(...),
+    email: str = Form(...),
+    password: str = Form(...),
+):
+    try:
+        data = RegisterForm(name=name, email=email, password=password)
+    except ValidationError as exc:
+        error = exc.errors()[0]["msg"].removeprefix("Value error, ")
+        return templates.TemplateResponse(
+            request, "register.html", {"error": error}, status_code=400
+        )
+
+    conn = get_db()
+    try:
+        conn.execute(
+            "INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)",
+            (data.name, data.email, pwd_context.hash(data.password)),
+        )
+        conn.commit()
+    except sqlite3.IntegrityError:
+        return templates.TemplateResponse(
+            request,
+            "register.html",
+            {"error": "An account with that email already exists."},
+            status_code=400,
+        )
+    finally:
+        conn.close()
+
+    return RedirectResponse(url="/login", status_code=303)
 
 
 @app.get("/login", response_class=HTMLResponse)
