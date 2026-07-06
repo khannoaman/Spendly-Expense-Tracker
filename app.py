@@ -38,6 +38,16 @@ async def login(request: Request):
     return templates.TemplateResponse(request, "login.html")
 
 
+@app.get("/terms", response_class=HTMLResponse)
+async def terms(request: Request):
+    return templates.TemplateResponse(request, "terms.html")
+
+
+@app.get("/privacy", response_class=HTMLResponse)
+async def privacy(request: Request):
+    return templates.TemplateResponse(request, "privacy.html")
+
+
 @app.post("/login")
 async def login_post(request: Request):
     # Form submission placeholder (e.g. redirect or show message)
