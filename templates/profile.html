@@ -64,6 +64,7 @@
                         <th>Category</th>
                         <th>Description</th>
                         <th class="amount-cell">Amount</th>
+                        <th class="actions-cell">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -76,6 +77,14 @@
                         </td>
                         <td>{{ e.description or "—" }}</td>
                         <td class="amount-cell">₹{{ e.amount_formatted }}</td>
+                        <td class="actions-cell">
+                            <a href="/expenses/{{ e.id }}/edit" class="table-action">Edit</a>
+                            <form method="POST" action="/expenses/{{ e.id }}/delete"
+                                  class="table-action-form"
+                                  onsubmit="return confirm('Delete this expense?');">
+                                <button type="submit" class="table-action table-action-danger">Delete</button>
+                            </form>
+                        </td>
                     </tr>
                     {% endfor %}
                 </tbody>

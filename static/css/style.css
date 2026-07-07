@@ -672,6 +672,30 @@ a { color: inherit; text-decoration: none; }
     font-variant-numeric: tabular-nums;
 }
 
+.expenses-table .actions-cell,
+.expenses-table th.actions-cell {
+    text-align: right;
+    white-space: nowrap;
+}
+
+.table-action-form { display: inline; }
+
+.table-action {
+    background: none;
+    border: none;
+    font: inherit;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--accent);
+    cursor: pointer;
+    padding: 0;
+    margin-left: 1rem;
+}
+
+.table-action:hover { text-decoration: underline; }
+
+.table-action-danger { color: var(--danger); }
+
 .empty-state {
     text-align: center;
     padding: 2.5rem 1.5rem;

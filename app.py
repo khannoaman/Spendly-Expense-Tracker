@@ -1,6 +1,7 @@
 import os
 import sqlite3
 from contextlib import asynccontextmanager
+from datetime import date
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -11,7 +12,7 @@ from starlette.middleware.sessions import SessionMiddleware
 import uvicorn
 
 from database.db import get_db, init_db, pwd_context, seed_db
-from schemas import LoginForm, RegisterForm
+from schemas import ExpenseForm, LoginForm, RegisterForm
 
 
 @asynccontextmanager
@@ -192,7 +193,7 @@ async def profile(request: Request, user: sqlite3.Row = Depends(get_current_user
     try:
         rows = conn.execute(
             """
-            SELECT amount, category, description, date
+            SELECT id, amount, category, description, date
             FROM expenses
             WHERE user_id = ?
             ORDER BY date DESC, id DESC
@@ -235,6 +236,7 @@ async def profile(request: Request, user: sqlite3.Row = Depends(get_current_user
 
     expenses = [
         {
+            "id": r["id"],
             "date": r["date"],
             "category": r["category"],
             "description": r["description"],
@@ -259,24 +261,163 @@ async def profile(request: Request, user: sqlite3.Row = Depends(get_current_user
 
 
 # ------------------------------------------------------------------ #
-# Placeholder routes — students will implement these                  #
+# Expenses                                                            #
 # ------------------------------------------------------------------ #
 
 
+def get_owned_expense(conn: sqlite3.Connection, expense_id: int, user_id: int) -> sqlite3.Row:
+    expense = conn.execute(
+        "SELECT id, amount, category, description, date FROM expenses WHERE id = ? AND user_id = ?",
+        (expense_id, user_id),
+    ).fetchone()
+    if expense is None:
+        raise HTTPException(status_code=404, detail="Expense not found")
+    return expense
 
-@app.get("/expenses/add")
-async def add_expense():
-    return "Add expense — coming in Step 7"
+
+@app.get("/expenses/add", response_class=HTMLResponse)
+async def add_expense(request: Request, user: sqlite3.Row = Depends(get_current_user)):
+    return templates.TemplateResponse(
+        request,
+        "expense_form.html",
+        {
+            "form_title": "Add expense",
+            "form_action": "/expenses/add",
+            "submit_label": "Add expense",
+            "expense": {"date": date.today().isoformat()},
+        },
+    )
 
 
-@app.get("/expenses/{id}/edit")
-async def edit_expense(id: int):
-    return f"Edit expense {id} — coming in Step 8"
+@app.post("/expenses/add", response_class=HTMLResponse)
+async def add_expense_post(
+    request: Request,
+    user: sqlite3.Row = Depends(get_current_user),
+    amount: str = Form(...),
+    category: str = Form(...),
+    description: str = Form(""),
+    date: str = Form(...),
+):
+    try:
+        data = ExpenseForm(amount=amount, category=category, description=description, date=date)
+    except ValidationError as exc:
+        error = exc.errors()[0]["msg"].removeprefix("Value error, ")
+        return templates.TemplateResponse(
+            request,
+            "expense_form.html",
+            {
+                "form_title": "Add expense",
+                "form_action": "/expenses/add",
+                "submit_label": "Add expense",
+                "expense": {
+                    "amount": amount,
+                    "category": category,
+                    "description": description,
+                    "date": date,
+                },
+                "error": error,
+            },
+            status_code=400,
+        )
+
+    conn = get_db()
+    try:
+        conn.execute(
+            """
+            INSERT INTO expenses (user_id, amount, category, description, date)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (user["id"], data.amount, data.category, data.description, data.date),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    return RedirectResponse(url="/profile", status_code=303)
 
 
-@app.get("/expenses/{id}/delete")
-async def delete_expense(id: int):
-    return f"Delete expense {id} — coming in Step 9"
+@app.get("/expenses/{id}/edit", response_class=HTMLResponse)
+async def edit_expense(id: int, request: Request, user: sqlite3.Row = Depends(get_current_user)):
+    conn = get_db()
+    try:
+        expense = get_owned_expense(conn, id, user["id"])
+    finally:
+        conn.close()
+
+    return templates.TemplateResponse(
+        request,
+        "expense_form.html",
+        {
+            "form_title": "Edit expense",
+            "form_action": f"/expenses/{id}/edit",
+            "submit_label": "Save changes",
+            "expense": expense,
+        },
+    )
+
+
+@app.post("/expenses/{id}/edit", response_class=HTMLResponse)
+async def edit_expense_post(
+    id: int,
+    request: Request,
+    user: sqlite3.Row = Depends(get_current_user),
+    amount: str = Form(...),
+    category: str = Form(...),
+    description: str = Form(""),
+    date: str = Form(...),
+):
+    conn = get_db()
+    try:
+        get_owned_expense(conn, id, user["id"])
+
+        try:
+            data = ExpenseForm(amount=amount, category=category, description=description, date=date)
+        except ValidationError as exc:
+            error = exc.errors()[0]["msg"].removeprefix("Value error, ")
+            return templates.TemplateResponse(
+                request,
+                "expense_form.html",
+                {
+                    "form_title": "Edit expense",
+                    "form_action": f"/expenses/{id}/edit",
+                    "submit_label": "Save changes",
+                    "expense": {
+                        "amount": amount,
+                        "category": category,
+                        "description": description,
+                        "date": date,
+                    },
+                    "error": error,
+                },
+                status_code=400,
+            )
+
+        conn.execute(
+            """
+            UPDATE expenses
+            SET amount = ?, category = ?, description = ?, date = ?
+            WHERE id = ? AND user_id = ?
+            """,
+            (data.amount, data.category, data.description, data.date, id, user["id"]),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    return RedirectResponse(url="/profile", status_code=303)
+
+
+@app.post("/expenses/{id}/delete")
+async def delete_expense(id: int, user: sqlite3.Row = Depends(get_current_user)):
+    conn = get_db()
+    try:
+        get_owned_expense(conn, id, user["id"])
+        conn.execute("DELETE FROM expenses WHERE id = ? AND user_id = ?", (id, user["id"]))
+        conn.commit()
+    finally:
+        conn.close()
+
+    return RedirectResponse(url="/profile", status_code=303)
 
 
 if __name__ == "__main__":
